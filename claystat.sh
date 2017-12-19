@@ -3,15 +3,17 @@
 # use the Claymore miner API to get basic information
 # ONLY tested with 3 GPUs mining ETH only
 # Evert Mouw <post@evert.net>
-# 2017-12-10
+# 2017-12-10, 2017-12-19
 
 # suggestion: add $0 watch to hourly cron
 # (no symlink; needs "watch" argument)
 
 EMAIL="post@evert.net"
 WARNMINHASH=16
-WARNMINGPU=3
+WARNMINGPU=4
 SERVER="localhost"
+REBOOTACTION="/opt/claymore/reboot.sh"
+SPEAK="yes"
 
 #-----------------------------------------------------
 
@@ -55,6 +57,10 @@ function portchecking {
 		local MSG="Could not connect to $SERVER on port 3333"
 		echo "$MSG"
 		echo "$MSG" | mail -s "#~ Miner $(hostname) DOWN" $EMAIL
+		if which notify-send > /dev/null
+		then
+			notify-send --icon=warn "Miner not running" "$MSG"
+		fi
 		exit 1
 	fi
 }
@@ -111,27 +117,55 @@ function processing {
 }
 
 function showing {
-	echo "Total hashrate: $TOTALHASH MHz"
-	echo "Mining pool: $POOL"
-	echo "Total shares accepted: $TOTALSHARES"
-	echo "Total shares rejected: $TOTALREJECT"
-	echo "Number of GPUs: $GPUCOUNT"
+	SUMMARY="Mining Summary"
+	SUMMARY="$SUMMARY\nTotal hashrate: $TOTALHASH MHz"
+	SUMMARY="$SUMMARY\nMining pool: $POOL"
+	SUMMARY="$SUMMARY\nTotal shares accepted: $TOTALSHARES"
+	SUMMARY="$SUMMARY\nTotal shares rejected: $TOTALREJECT"
+	SUMMARY="$SUMMARY\nNumber of GPUs: $GPUCOUNT"
+	echo -e $SUMMARY
 	i=0
+	NOTIFICATION="gpu\thash\ttemp\tfan"
 	while [ $i -lt $GPUCOUNT ]
 	do
-		echo "GPU $i: ${GPU_HASH[$i]} MHz, ${GPU_TEMP[$i]} degrees C, fan at ${GPU_FANP[$i]}%"
+		echo "GPU $i: ${GPU_HASH[$i]} MHz, ${GPU_TEMP[$i]} degrees C, fan at ${GPU_FANP[$i]} %"
+		NOTIFICATION="$NOTIFICATION\n$i\t${GPU_HASH[$i]} MHz\t${GPU_TEMP[$i]} C\t\t${GPU_FANP[$i]} %"
 		i=$((i+1))
 	done
+	if which notify-send > /dev/null
+	then
+		notify-send --icon=info "Now mining at $TOTALHASH MHz" "\n$NOTIFICATION\n\n$SUMMARY"
+	fi
+	if [ "$SPEAK" == "yes" ]
+	then
+		espeak "Informational. Mining at $TOTALHASH megahertz. Counting $GPUCOUNT cards. All normal."
+	fi
 }
 
 function helper_showandmail_slow {
 	#echo "$1"
 	echo "$1" | mail -s "#! Miner $(hostname) slow" $EMAIL
+	if which notify-send > /dev/null
+	then
+		notify-send --icon=warn "Slow mining" "$1"
+	fi
+	if [ "$SPEAK" == "yes" ]
+	then
+		espeak "Warning: mining with low hashrate. $1"
+	fi
 }
 
 function helper_showandmail_gpucount {
 	#echo "$1"
 	echo "$1" | mail -s "#! Miner $(hostname) GPU missing" $EMAIL
+	if which notify-send > /dev/null
+	then
+		notify-send --icon=warn "Mining error" "$1"
+	fi
+	if [ "$SPEAK" == "yes" ]
+	then
+		espeak "Critical warning: GPU missing from miner. $1"
+	fi
 }
 
 function watchdogging {
@@ -148,6 +182,7 @@ function watchdogging {
 	then
 		helper_showandmail_gpucount "Only $GPUCOUNT GPUs active, while $WARNMINGPU were expected."
 	fi
+	$REBOOTACTION
 }
 
 ### start running the main loop
