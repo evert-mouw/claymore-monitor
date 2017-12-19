@@ -138,7 +138,7 @@ function showing {
 	fi
 	if [ "$SPEAK" == "yes" ]
 	then
-		espeak "Informational. Mining at $TOTALHASH megahertz. Counting $GPUCOUNT cards. All normal."
+		espeak "Informational. Mining at $TOTALHASH megahertz. Counting $GPUCOUNT cards. All normal." 2>/dev/null
 	fi
 }
 
@@ -151,7 +151,7 @@ function helper_showandmail_slow {
 	fi
 	if [ "$SPEAK" == "yes" ]
 	then
-		espeak "Warning: mining with low hashrate. $1"
+		espeak "Warning: mining with low hashrate. $1" 2>/dev/null
 	fi
 }
 
@@ -164,7 +164,7 @@ function helper_showandmail_gpucount {
 	fi
 	if [ "$SPEAK" == "yes" ]
 	then
-		espeak "Critical warning: GPU missing from miner. $1"
+		espeak "Critical warning: GPU missing from miner. $1" 2>/dev/null
 	fi
 }
 
