@@ -1,12 +1,20 @@
 #!/bin/bash
 
-# use the Claymore miner API to get basic information
-# ONLY tested with 3 GPUs mining ETH only
+# Use the Claymore miner API to get basic information and notify
+# the user using CLI (echo), GUI( notify-send) and sound (espeak).
+# Also send emais to the owner (I recommend s-nail and msmtp.)
+# Furthermore initiate a reboot action if the miner has failed.
+# Suggestion: add this script to cron for automated monitoring.
+
+# ONLY tested with 4 GPUs mining ETH only using Arch Linux
 # Evert Mouw <post@evert.net>
 # 2017-12-10, 2017-12-19
 
-# suggestion: add $0 watch to hourly cron
-# (no symlink; needs "watch" argument)
+# GNU netcat has broken timeout (wait)
+# so use OpenBSD netcat instead!
+# https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=97583
+# pacman -R gnu-netcat
+# pacman -S openbsd-netcat
 
 EMAIL="post@evert.net"
 WARNMINHASH=16
@@ -20,6 +28,12 @@ SPEAK="yes"
 set -euo pipefail
 argument=${1:-}
 
+if [[ $(whoami) != "root" ]]
+then
+	echo "I need root (sudo) rights."
+	exit 1
+fi
+
 # define variables
 declare -a RESULT #array
 
@@ -27,20 +41,19 @@ function main {
 	depending
 	portchecking
 	getting
-	#testing
+	testing
 	processing
-	case $argument in
-		show) showing
-			;;
-		watch) watchdogging
-			;;
-		*) echo "Invoke with { show | watch } as argument."
-			;;
-	esac
+	watchdogging
+	showing
+	#case $argument in
+	#	show) showing ;;
+	#	watch) watchdogging ;;
+	#	*) echo "Invoke with { show | watch } as argument." ;;
+	#esac
 }
 
 function depending {
-	DEPENDENCIES="netcat jq"
+	DEPENDENCIES="netcat jq mail"
 	for DEP in $DEPENDENCIES
 	do
 		if ! which $DEP > /dev/null
@@ -68,7 +81,13 @@ function portchecking {
 function getting {
 	# get the json encoded info using the claymore api
 	IFS=$'\n'
-	RESULT=($(echo '{"id":0,"jsonrpc":"2.0","method":"miner_getstat1"}' | netcat $SERVER 3333 | jq '{result}'))
+	RESULT=($(echo '{"id":0,"jsonrpc":"2.0","method":"miner_getstat1"}' | netcat -w 2 $SERVER 3333 | jq '{result}'))
+	if [[ ${RESULT[0]} == "" ]]
+	then
+		DEAD="NO RESPONSE: port open but no answer. The miner is probably dead."
+		helper_showandmail_unresponsive $DEAD
+		exit 1
+	fi
 }
 
 function testing {
@@ -83,6 +102,7 @@ function testing {
 		i=$((i+1))
 	done
 
+	echo "3 - uptime in minutes"
 	echo "4 - totals for ETH: hashrate + shares + rejected shares"
 	echo "5 - hashrate per gpu"
 	echo "8 - temperature and fan speed(%) pairs for all GPUs."
@@ -90,6 +110,8 @@ function testing {
 }
 
 function processing {
+	UPTIME=$(echo ${RESULT[3]} | egrep -o '[0-9]+')
+
 	LINE4=$(echo ${RESULT[4]} | egrep -o '[0-9]+')
 	TOTALHASH=$(echo $LINE4 | cut -d' ' -f1)
 	TOTALHASH=$((TOTALHASH/1000))
@@ -110,19 +132,20 @@ function processing {
 	done
 	GPUCOUNT=$i
 
-	
-
-	LINE9=$(echo ${RESULT[9]} | egrep -o '\".+\"')
+	#LINE9=$(echo ${RESULT[9]} | egrep -o '\".+\"' | tr -d \")
+	LINE9=$(echo ${RESULT[9]} | cut -d\" -f2)
 	POOL="$LINE9"
 }
 
 function showing {
 	SUMMARY="Mining Summary"
 	SUMMARY="$SUMMARY\nTotal hashrate: $TOTALHASH MHz"
+	SUMMARY="$SUMMARY\nNumber of GPUs: $GPUCOUNT"
+	SUMMARY="$SUMMARY\nUptime: $UPTIME minutes"
 	SUMMARY="$SUMMARY\nMining pool: $POOL"
 	SUMMARY="$SUMMARY\nTotal shares accepted: $TOTALSHARES"
 	SUMMARY="$SUMMARY\nTotal shares rejected: $TOTALREJECT"
-	SUMMARY="$SUMMARY\nNumber of GPUs: $GPUCOUNT"
+	
 	echo -e $SUMMARY
 	i=0
 	NOTIFICATION="gpu\thash\ttemp\tfan"
@@ -160,7 +183,7 @@ function helper_showandmail_gpucount {
 	echo "$1" | mail -s "#! Miner $(hostname) GPU missing" $EMAIL
 	if which notify-send > /dev/null
 	then
-		notify-send --icon=warn "Mining error" "$1"
+		notify-send --icon=warn "Mining GPU error" "$1"
 	fi
 	if [ "$SPEAK" == "yes" ]
 	then
@@ -168,7 +191,28 @@ function helper_showandmail_gpucount {
 	fi
 }
 
+function helper_showandmail_unresponsive {
+	echo "$1"
+	echo "$1" | mail -s "#! Miner $(hostname) unresponsive" $EMAIL
+	if which notify-send > /dev/null
+	then
+		notify-send --icon=warn "Miner is dead" "$1"
+	fi
+	if [ "$SPEAK" == "yes" ]
+	then
+		espeak "Critical error: $1" 2>/dev/null
+	fi
+	$REBOOTACTION
+}
+
 function watchdogging {
+	# only continue if the uptime is long enough
+	MINUPTIME=$((GPUCOUNT+2))
+	if [[ $UPTIME -lt $MINUPTIME ]]
+	then
+		return
+	fi
+	# check the hashrate of each individual GPU
 	i=0
 	while [ $i -lt $GPUCOUNT ]
 	do
@@ -178,11 +222,13 @@ function watchdogging {
 		fi
 		i=$((i+1))
 	done
+	# count the total number of GPUs
 	if [ $GPUCOUNT -lt $WARNMINGPU ]
 	then
-		helper_showandmail_gpucount "Only $GPUCOUNT GPUs active, while $WARNMINGPU were expected."
+		helper_showandmail_gpucount "Only $GPUCOUNT GPUs active, while $WARNMINGPU were expected. Uptime is $UPTIME minutes."
+		sleep 1
+		$REBOOTACTION
 	fi
-	$REBOOTACTION
 }
 
 ### start running the main loop
